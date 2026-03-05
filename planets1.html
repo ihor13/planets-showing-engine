@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Solar System V10 - Physics Simulator</title>
+<style>
+body { margin:0; overflow:hidden; background:black; font-family:Arial; }
+
+#panel{
+position:absolute;
+left:10px;
+top:10px;
+background:rgba(0,0,0,0.7);
+padding:10px;
+border-radius:8px;
+color:white;
+max-height:90vh;
+overflow-y:auto;
+}
+
+#panel button{
+display:block;
+margin:5px 0;
+width:140px;
+background:#222;
+color:white;
+border:1px solid #555;
+padding:5px;
+cursor:pointer;
+}
+
+#panel button:hover{
+background:#444;
+}
+
+#speedControl{
+margin-top:10px;
+}
+</style>
+</head>
+<body>
+
+<div id="panel">
+<strong>Planets</strong>
+<div id="planetList"></div>
+<button onclick="toggleTrajectories()">Show/Hide Trajectories</button>
+<div id="speedControl">
+Time Speed:
+<input type="range" id="speed" min="0.1" max="30" step="0.1" value="5">
+</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128/examples/js/controls/OrbitControls.js"></script>
+
+<script>
+const scene = new THREE.Scene()
+const camera = new THREE.PerspectiveCamera( 75, window.innerWidth/window.innerHeight, 0.1, 50000 )
+camera.position.set(0,600,2000)
+
+const renderer = new THREE.WebGLRenderer({antialias:true})
+renderer.setSize(window.innerWidth,window.innerHeight)
+document.body.appendChild(renderer.domElement)
+
+const controls = new THREE.OrbitControls(camera,renderer.domElement)
+controls.enableDamping = true
+controls.dampingFactor = 0.08
+controls.rotateSpeed = 0.4
+controls.zoomSpeed = 0.6
+controls.panSpeed = 0.4
+
+scene.add(new THREE.AmbientLight(0xffffff,0.5))
+const sunLight = new THREE.PointLight(0xffffff,3,0)
+scene.add(sunLight)
+
+// STARFIELD
+const starGeo = new THREE.BufferGeometry()
+const starCount = 20000
+const positions = []
+for(let i=0;i<starCount;i++){
+    positions.push( (Math.random()-0.5)*60000, (Math.random()-0.5)*60000, (Math.random()-0.5)*60000 )
+}
+starGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions,3))
+const stars = new THREE.Points( starGeo, new THREE.PointsMaterial({color:0xffffff,size:1.5}) )
+scene.add(stars)
+
+// SCALE
+const distanceScale = 0.00002
+const sizeScale = 0.0006
+
+// SUN
+const sun = new THREE.Mesh(
+    new THREE.SphereGeometry(696340*sizeScale,64,64),
+    new THREE.MeshBasicMaterial({ color:0xffff00 })
+)
+scene.add(sun)
+
+// PLANET DATA
+const planetData = [
+    { name:"Mercury", radius:2439, distance:57900000, period:88, color:0xaaaaaa },
+    { name:"Venus", radius:6051, distance:108200000, period:225, color:0xffcc88 },
+    { name:"Earth", radius:6371, distance:149600000, period:365, color:0x3399ff },
+    { name:"Mars", radius:3389, distance:227900000, period:687, color:0xff5533 },
+    { name:"Jupiter", radius:69911, distance:778500000, period:4333, color:0xffaa88 },
+    { name:"Saturn", radius:58232, distance:1433000000, period:10759, color:0xffddaa },
+    { name:"Uranus", radius:25362, distance:2872000000, period:30687, color:0x66ffff },
+    { name:"Neptune", radius:24622, distance:4495000000, period:60190, color:0x3366ff }
+]
+
+const planets = []
+const orbits = []
+const moons = []
+let selectedPlanet = null
+const clock = new THREE.Clock()
+
+// CREATE PLANETS
+planetData.forEach(data=>{
+    const planet = new THREE.Mesh(
+        new THREE.SphereGeometry(data.radius*sizeScale,32,32),
+        new THREE.MeshStandardMaterial({ color:data.color, emissive:0x111111 })
+    )
+    planet.userData = {
+        name:data.name,
+        orbitRadius:data.distance*distanceScale,
+        angularSpeed:(2*Math.PI)/data.period
+    }
+    scene.add(planet)
+    planets.push(planet)
+
+    // ORBIT PATH
+    const orbitGeo = new THREE.RingGeometry(
+        planet.userData.orbitRadius-1,
+        planet.userData.orbitRadius+1,
+        128
+    )
+    const orbitMat = new THREE.MeshBasicMaterial({
+        color:0xffff00,
+        side:THREE.DoubleSide
+    })
+    const orbit = new THREE.Mesh(orbitGeo,orbitMat)
+    orbit.rotation.x = Math.PI/2
+    scene.add(orbit)
+    orbits.push(orbit)
+})
+
+// SATURN RINGS
+const saturn = planets[5]
+const ring = new THREE.Mesh(
+    new THREE.RingGeometry(120,220,64),
+    new THREE.MeshBasicMaterial({
+        color:0xaaaaaa,
+        side:THREE.DoubleSide,
+        transparent:true,
+        opacity:0.7
+    })
+)
+ring.rotation.x=Math.PI/2
+saturn.add(ring)
+
+// EARTH MOON
+const moon = new THREE.Mesh(
+    new THREE.SphereGeometry(1737*sizeScale,32,32),
+    new THREE.MeshStandardMaterial({color:0x888888})
+)
+moon.userData = { distance:60, speed:0.03 }
+scene.add(moon)
+moons.push({moon:moon,parent:planets[2]})
+
+// JUPITER MOONS
+for(let i=0;i<4;i++){
+    const jm = new THREE.Mesh(
+        new THREE.SphereGeometry(1200*sizeScale,16,16),
+        new THREE.MeshStandardMaterial({color:0xbbbbbb})
+    )
+    jm.userData = { distance:90+i*25, speed:0.02+i*0.005 }
+    scene.add(jm)
+    moons.push({moon:jm,parent:planets[4]})
+}
+
+// PLANET UI
+const listDiv = document.getElementById("planetList")
+planetData.forEach((data,i)=>{
+    const btn = document.createElement("button")
+    btn.textContent = data.name
+    btn.onclick = ()=>selectPlanet(planets[i],orbits[i])
+    listDiv.appendChild(btn)
+})
+
+function selectPlanet(planet,orbit){
+    planets.forEach(p=>p.material.emissive.set(0x000000))
+    orbits.forEach(o=>o.material.color.set(0x444444))
+
+    planet.material.emissive.set(0xffff00)
+    orbit.material.color.set(0xffff00)
+    orbit.visible = true
+
+    selectedPlanet = planet
+
+    // Move camera smoothly to planet
+    const offset = 120
+    camera.position.set(
+        planet.position.x + offset,
+        planet.position.y + offset,
+        planet.position.z + offset
+    )
+    controls.target.copy(planet.position)
+    controls.update()
+}
+
+// SPEED
+const speedSlider = document.getElementById("speed")
+
+// RAYCAST CLICK
+const raycaster = new THREE.Raycaster()
+const mouse = new THREE.Vector2()
+window.addEventListener("click",event=>{
+    mouse.x = (event.clientX/window.innerWidth)*2-1
+    mouse.y = -(event.clientY/window.innerHeight)*2+1
+    raycaster.setFromCamera(mouse,camera)
+    const intersects = raycaster.intersectObjects(planets)
+    if(intersects.length>0){
+        const index = planets.indexOf(intersects[0].object)
+        selectPlanet(planets[index],orbits[index])
+    }
+})
+
+// TRAJECTORY TOGGLE
+let trajectoriesVisible = true
+function toggleTrajectories(){
+    trajectoriesVisible = !trajectoriesVisible
+    orbits.forEach(o=>{
+        o.visible = trajectoriesVisible
+        if(trajectoriesVisible) o.material.color.set(0xffff00)
+    })
+}
+
+// ANIMATION
+function animate(){
+    requestAnimationFrame(animate)
+    const elapsed = clock.getElapsedTime()*speedSlider.value
+
+    // PLANETS
+    planets.forEach((planet,i)=>{
+        const r = planet.userData.orbitRadius
+        const speed = planet.userData.angularSpeed
+        planet.position.x = r*Math.cos(elapsed*speed)
+        planet.position.z = r*Math.sin(elapsed*speed)
+        planet.rotation.y += 0.01
+    })
+
+    // MOONS
+    moons.forEach(obj=>{
+        const parent = obj.parent
+        const moon = obj.moon
+        const r = moon.userData.distance
+        const speed = moon.userData.speed
+        moon.position.x = parent.position.x + r*Math.cos(elapsed*speed)
+        moon.position.z = parent.position.z + r*Math.sin(elapsed*speed)
+    })
+
+    controls.update()
+    renderer.render(scene,camera)
+}
+
+animate()
+
+window.addEventListener("resize",()=>{
+    camera.aspect = window.innerWidth/window.innerHeight
+    camera.updateProjectionMatrix()
+    renderer.setSize(window.innerWidth,window.innerHeight)
+})
+</script>
+</body>
+</html>
